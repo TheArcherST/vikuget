@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from ipaddress import ip_address
+from pathlib import Path
 
 import pytest
 
+from vikuget import Settings
 from vikuget.access import AccessPolicy, client_ip_from_x_forwarded_for
 
 
@@ -26,3 +28,16 @@ def test_client_ip_is_the_rightmost_traefik_forwarded_address() -> None:
     assert client_ip_from_x_forwarded_for("198.51.100.10, 203.0.113.44") == ip_address(
         "203.0.113.44"
     )
+
+
+def test_settings_reads_wildcard_allowlist_from_environment(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ALLOWED_IPS", "*")
+
+    settings = Settings(
+        vikunja_url="http://vikunja:3456",
+        vikunja_token="vikunja-token",
+        vikunja_project_id=17,
+        request_store_path=Path(tmp_path / "idempotency.sqlite3"),
+    )
+
+    assert settings.allowed_ips.allows(ip_address("203.0.113.1"))

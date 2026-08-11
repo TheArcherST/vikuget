@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .access import AccessPolicy
 
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     vikunja_token: SecretStr
     vikunja_project_id: int = Field(gt=0)
     vikunja_project_view_id: int | None = Field(default=None, gt=0)
-    allowed_ips: AccessPolicy
+    allowed_ips: Annotated[AccessPolicy, NoDecode]
     request_store_path: Path = Path("/data/idempotency.sqlite3")
     request_retention_days: int = Field(default=30, ge=1, le=365)
     vikunja_timeout_seconds: float = Field(default=15, gt=0, le=120)
