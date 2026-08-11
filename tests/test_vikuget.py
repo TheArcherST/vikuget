@@ -23,8 +23,8 @@ def api_headers() -> dict[str, str]:
     return {"X-Forwarded-Proto": "https"}
 
 
-def api_path(path: str, token: str = "a" * 32) -> str:
-    return f"/v1/{token}{path}"
+def api_path(path: str, token: str = "a" * 32, request_tag: str = "read:1") -> str:
+    return f"/v1/{token}/{request_tag}{path}"
 
 
 def test_create_is_replayed_without_second_vikunja_call(tmp_path) -> None:
@@ -48,13 +48,13 @@ def test_create_is_replayed_without_second_vikunja_call(tmp_path) -> None:
 
     with make_client(tmp_path, handler) as client:
         first = client.get(
-            api_path("/tasks/create"),
-            params={"title": "Buy SSD", "due_date": "2026-08-14", "request_tag": "create:42"},
+            api_path("/tasks/create", request_tag="create:42"),
+            params={"title": "Buy SSD", "due_date": "2026-08-14"},
             headers=api_headers(),
         )
         second = client.get(
-            api_path("/tasks/create"),
-            params={"title": "Buy SSD", "due_date": "2026-08-14", "request_tag": "create:42"},
+            api_path("/tasks/create", request_tag="create:42"),
+            params={"title": "Buy SSD", "due_date": "2026-08-14"},
             headers=api_headers(),
         )
 
@@ -87,8 +87,7 @@ def test_task_outside_configured_project_is_hidden_and_not_modified(tmp_path) ->
 
     with make_client(tmp_path, handler) as client:
         response = client.get(
-            api_path("/tasks/99/complete"),
-            params={"request_tag": "complete:99"},
+            api_path("/tasks/99/complete", request_tag="complete:99"),
             headers=api_headers(),
         )
 

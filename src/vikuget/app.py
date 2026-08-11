@@ -23,7 +23,7 @@ from .views import comment_view, fingerprint, nonblank, task_view
 
 logger = logging.getLogger(__name__)
 
-API_PREFIX = "/v1/{access_token}"
+API_PREFIX = "/v1/{access_token}/{request_tag}"
 
 
 @dataclass
@@ -35,6 +35,11 @@ class Services:
 
 async def get_services(request: Request) -> Services:
     return request.app.state.services
+
+
+ServicesDep = Annotated[Services, Depends(get_services)]
+RequestTag = Annotated[str, Path(min_length=1, max_length=1024)]
+TaskId = Annotated[int, Path(ge=1)]
 
 
 async def require_access_token(
@@ -54,9 +59,16 @@ async def require_access_token(
         )
 
 
-ServicesDep = Annotated[Services, Depends(get_services)]
-RequestTag = Annotated[str, Query(min_length=1, max_length=1024)]
-TaskId = Annotated[int, Path(ge=1)]
+async def require_request_tag(request_tag: RequestTag) -> None:
+    if not request_tag.strip():
+        raise ApiProblem(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_request",
+            "request_tag must not be blank.",
+        )
+
+
+ApiDependencies = [Depends(require_access_token), Depends(require_request_tag)]
 
 
 def json_response(body: dict[str, Any], *, replayed: bool = False) -> JSONResponse:
@@ -203,7 +215,7 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get(f"{API_PREFIX}/tasks", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks", dependencies=ApiDependencies)
     async def list_tasks(
         services: ServicesDep,
         page: Annotated[int, Query(ge=1)] = 1,
@@ -220,7 +232,7 @@ def create_app(
             result["pagination"]["total"] = total
         return json_response(result)
 
-    @app.get(f"{API_PREFIX}/tasks/search", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/search", dependencies=ApiDependencies)
     async def search_tasks(
         services: ServicesDep,
         q: Annotated[str, Query(min_length=1, max_length=500)],
@@ -239,7 +251,7 @@ def create_app(
             result["pagination"]["total"] = total
         return json_response(result)
 
-    @app.get(f"{API_PREFIX}/tasks/create", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/create", dependencies=ApiDependencies)
     async def create_task(
         services: ServicesDep,
         request_tag: RequestTag,
@@ -265,7 +277,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/update", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/update", dependencies=ApiDependencies)
     async def update_task(
         services: ServicesDep,
         task_id: TaskId,
@@ -299,9 +311,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(
-        f"{API_PREFIX}/tasks/{{task_id}}/complete", dependencies=[Depends(require_access_token)]
-    )
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/complete", dependencies=ApiDependencies)
     async def complete_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
     ) -> JSONResponse:
@@ -318,7 +328,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/reopen", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/reopen", dependencies=ApiDependencies)
     async def reopen_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
     ) -> JSONResponse:
@@ -335,7 +345,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/delete", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/delete", dependencies=ApiDependencies)
     async def delete_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
     ) -> JSONResponse:
@@ -352,9 +362,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(
-        f"{API_PREFIX}/tasks/{{task_id}}/comment/add", dependencies=[Depends(require_access_token)]
-    )
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/comment/add", dependencies=ApiDependencies)
     async def add_comment(
         services: ServicesDep,
         task_id: TaskId,
@@ -377,9 +385,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(
-        f"{API_PREFIX}/tasks/{{task_id}}/label/add", dependencies=[Depends(require_access_token)]
-    )
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/label/add", dependencies=ApiDependencies)
     async def add_label(
         services: ServicesDep,
         task_id: TaskId,
@@ -402,9 +408,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(
-        f"{API_PREFIX}/tasks/{{task_id}}/label/remove", dependencies=[Depends(require_access_token)]
-    )
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}/label/remove", dependencies=ApiDependencies)
     async def remove_label(
         services: ServicesDep,
         task_id: TaskId,
@@ -427,7 +431,7 @@ def create_app(
             operation=operation,
         )
 
-    @app.get(f"{API_PREFIX}/tasks/{{task_id}}", dependencies=[Depends(require_access_token)])
+    @app.get(f"{API_PREFIX}/tasks/{{task_id}}", dependencies=ApiDependencies)
     async def get_task(services: ServicesDep, task_id: TaskId) -> JSONResponse:
         task = await services.vikunja.task_in_project(task_id)
         return json_response({"ok": True, "action": "task_retrieved", "task": task_view(task)})

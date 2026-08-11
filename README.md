@@ -37,7 +37,7 @@ SQLite находится в `./vikuget-data/` в корне репозитор�
 Рабочий URL всегда начинается так:
 
 ```text
-https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/...
+https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/<REQUEST_TAG>/...
 ```
 
 Это сознательно path-token, чтобы подойти инструментам, умеющим делать только обычные GET.
@@ -45,40 +45,40 @@ https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/...
 секрет не должен попадать в журналы. Не вставляй этот URL в публичные страницы, логи или историю
 команд, которую могут читать другие.
 
-Все изменяющие запросы требуют `request_tag`. Это произвольная непустая строка до 1024 символов,
-например `1723363200:17`; после URL-кодирования она становится частью URL и отличает одну
+`REQUEST_TAG` обязателен в любом запросе. Это произвольная непустая строка до 1024 символов,
+например `1723363200:17`; после URL-кодирования она идёт сразу после token и отличает одну
 пользовательскую интенцию от другой даже при неконтролируемом промежуточном кэшировании.
 
 Ответы содержат `Cache-Control: no-store, no-cache, max-age=0, private`, `Pragma: no-cache` и
-`Expires: 0`. Повтор с тем же `request_tag` и теми же параметрами вернёт сохранённый ответ без
-повторного вызова Vikunja (`Idempotent-Replay: true`). С тем же тегом и другими параметрами будет
-`409`. Если исход операции нельзя безопасно установить, повтор также вернёт `409`, а не создаст
-дубликат.
+`Expires: 0`. Для изменяющих операций повтор с тем же tag и теми же параметрами вернёт сохранённый
+ответ без повторного вызова Vikunja (`Idempotent-Replay: true`). С тем же tag и другими параметрами
+будет `409`. Если исход операции нельзя безопасно установить, повтор также вернёт `409`, а не
+создаст дубликат.
 
 ## API
 
-Во всех путях ниже `BASE` — `https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>`. Все методы —
-только `GET`; даты указываются как `YYYY-MM-DD`.
+Во всех путях ниже `BASE` —
+`https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/<REQUEST_TAG>`. Все методы — только `GET`;
+даты указываются как `YYYY-MM-DD`.
 
 | Действие | URL и параметры |
 | --- | --- |
 | Список | `BASE/tasks?page=1&per_page=100` |
 | Поиск | `BASE/tasks/search?q=...&page=1&per_page=100` |
 | Одна задача | `BASE/tasks/{id}` |
-| Создать | `BASE/tasks/create?title=...&description=...&due_date=...&request_tag=...` |
-| Изменить | `BASE/tasks/{id}/update?title=...&due_date=...&request_tag=...` |
-| Выполнить / открыть | `BASE/tasks/{id}/complete?request_tag=...` / `BASE/tasks/{id}/reopen?request_tag=...` |
-| Удалить | `BASE/tasks/{id}/delete?request_tag=...` |
-| Добавить комментарий | `BASE/tasks/{id}/comment/add?text=...&request_tag=...` |
-| Добавить / снять метку | `BASE/tasks/{id}/label/add?label=...&request_tag=...` / `BASE/tasks/{id}/label/remove?label=...&request_tag=...` |
+| Создать | `BASE/tasks/create?title=...&description=...&due_date=...` |
+| Изменить | `BASE/tasks/{id}/update?title=...&due_date=...` |
+| Выполнить / открыть | `BASE/tasks/{id}/complete` / `BASE/tasks/{id}/reopen` |
+| Удалить | `BASE/tasks/{id}/delete` |
+| Добавить комментарий | `BASE/tasks/{id}/comment/add?text=...` |
+| Добавить / снять метку | `BASE/tasks/{id}/label/add?label=...` / `BASE/tasks/{id}/label/remove?label=...` |
 
 Например:
 
 ```bash
-curl --get 'https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/tasks/create' \
+curl --get 'https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/1723363200:17/tasks/create' \
   --data-urlencode 'title=Купить SSD' \
-  --data-urlencode 'due_date=2026-08-14' \
-  --data-urlencode 'request_tag=1723363200:17'
+  --data-urlencode 'due_date=2026-08-14'
 ```
 
 Успешный ответ всегда простой JSON:

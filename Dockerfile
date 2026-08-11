@@ -1,16 +1,16 @@
-FROM python:3.13-slim
+FROM ghcr.io/astral-sh/uv:0.11.10-python3.13-trixie-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --no-cache-dir --no-deps .
+RUN uv sync --frozen --no-dev --no-editable
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 CMD ["uvicorn", "--factory", "vikuget.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
