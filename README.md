@@ -81,22 +81,15 @@ curl --get 'https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/1723363200:17/tasks
   --data-urlencode 'due_date=2026-08-14'
 ```
 
-Успешный ответ всегда простой JSON:
+Каждый ответ — минимальный HTML без стилей и визуального интерфейса. JSON лежит текстом в
+единственном элементе `script#vikuget-result` с `type="application/json"`:
 
-```json
-{
-  "ok": true,
-  "action": "task_created",
-  "task": {
-    "id": 42,
-    "title": "Купить SSD",
-    "description": "",
-    "done": false,
-    "due_date": "2026-08-14",
-    "labels": []
-  }
-}
+```html
+<!doctype html><html><head><meta charset="utf-8"></head><body><script id="vikuget-result" type="application/json">{"ok":true,"action":"task_created","task":{"id":42,"title":"Купить SSD","description":"","done":false,"due_date":"2026-08-14","labels":[]}}</script></body></html>
 ```
+
+Из HTML JSON извлекается напрямую: `JSON.parse(document.querySelector("#vikuget-result").textContent)`.
+Ошибки используют ту же структуру и отличаются полем `ok: false`.
 
 Перед действием с `task_id` шлюз читает задачу и проверяет её `project_id`; задача из другого
 проекта выглядит как несуществующая. Метка добавляется по имени: существующая переиспользуется,

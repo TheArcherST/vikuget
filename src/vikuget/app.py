@@ -12,12 +12,12 @@ import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Path, Query, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .client import VikunjaClient
 from .config import Settings
-from .errors import NO_STORE_HEADERS, ApiProblem, error_body, error_response
+from .errors import ApiProblem, error_body, error_response, result_response
 from .replays import CachedResponse, RequestReplayStore
 from .views import comment_view, fingerprint, nonblank, task_view
 
@@ -71,13 +71,6 @@ async def require_request_tag(request_tag: RequestTag) -> None:
 ApiDependencies = [Depends(require_access_token), Depends(require_request_tag)]
 
 
-def json_response(body: dict[str, Any], *, replayed: bool = False) -> JSONResponse:
-    headers = dict(NO_STORE_HEADERS)
-    if replayed:
-        headers["Idempotent-Replay"] = "true"
-    return JSONResponse(status_code=status.HTTP_200_OK, content=body, headers=headers)
-
-
 async def run_mutation(
     services: Services,
     *,
@@ -85,16 +78,16 @@ async def run_mutation(
     request_tag: str,
     arguments: Mapping[str, Any],
     operation: Callable[[], Awaitable[dict[str, Any]]],
-) -> JSONResponse:
+) -> HTMLResponse:
     cached = services.replays.claim(
         request_tag=request_tag,
         fingerprint=fingerprint(action, arguments),
     )
     if cached is not None:
-        return JSONResponse(
+        return result_response(
             status_code=cached.status_code,
-            content=cached.body,
-            headers={**NO_STORE_HEADERS, "Idempotent-Replay": "true"},
+            body=cached.body,
+            extra_headers={"Idempotent-Replay": "true"},
         )
 
     try:
@@ -119,10 +112,9 @@ async def run_mutation(
         )
 
     services.replays.complete(request_tag=request_tag, response=response)
-    return JSONResponse(
+    return result_response(
         status_code=response.status_code,
-        content=response.body,
-        headers=NO_STORE_HEADERS,
+        body=response.body,
     )
 
 
@@ -181,7 +173,7 @@ def create_app(
         return await call_next(request)
 
     @app.exception_handler(ApiProblem)
-    async def handle_api_problem(_: Request, problem: ApiProblem) -> JSONResponse:
+    async def handle_api_problem(_: Request, problem: ApiProblem) -> HTMLResponse:
         return error_response(
             status_code=problem.status_code,
             action="request_rejected",
@@ -190,7 +182,7 @@ def create_app(
         )
 
     @app.exception_handler(RequestValidationError)
-    async def handle_validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def handle_validation_error(_: Request, __: RequestValidationError) -> HTMLResponse:
         return error_response(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             action="request_rejected",
@@ -199,7 +191,7 @@ def create_app(
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def handle_http_exception(_: Request, problem: StarletteHTTPException) -> JSONResponse:
+    async def handle_http_exception(_: Request, problem: StarletteHTTPException) -> HTMLResponse:
         code = (
             "not_found" if problem.status_code == status.HTTP_404_NOT_FOUND else "request_rejected"
         )
@@ -212,15 +204,18 @@ def create_app(
         )
 
     @app.get("/health", include_in_schema=False)
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> HTMLResponse:
+        return result_response(
+            status_code=status.HTTP_200_OK,
+            body={"ok": True, "action": "health_checked", "status": "ok"},
+        )
 
     @app.get(f"{API_PREFIX}/tasks", dependencies=ApiDependencies)
     async def list_tasks(
         services: ServicesDep,
         page: Annotated[int, Query(ge=1)] = 1,
         per_page: Annotated[int, Query(ge=1, le=100)] = 100,
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         tasks, total = await services.vikunja.list_tasks(page=page, per_page=per_page)
         result: dict[str, Any] = {
             "ok": True,
@@ -230,7 +225,7 @@ def create_app(
         }
         if total is not None:
             result["pagination"]["total"] = total
-        return json_response(result)
+        return result_response(status_code=status.HTTP_200_OK, body=result)
 
     @app.get(f"{API_PREFIX}/tasks/search", dependencies=ApiDependencies)
     async def search_tasks(
@@ -238,7 +233,7 @@ def create_app(
         q: Annotated[str, Query(min_length=1, max_length=500)],
         page: Annotated[int, Query(ge=1)] = 1,
         per_page: Annotated[int, Query(ge=1, le=100)] = 100,
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         query = nonblank(q, field_name="q")
         tasks, total = await services.vikunja.list_tasks(page=page, per_page=per_page, query=query)
         result: dict[str, Any] = {
@@ -249,7 +244,7 @@ def create_app(
         }
         if total is not None:
             result["pagination"]["total"] = total
-        return json_response(result)
+        return result_response(status_code=status.HTTP_200_OK, body=result)
 
     @app.get(f"{API_PREFIX}/tasks/create", dependencies=ApiDependencies)
     async def create_task(
@@ -258,7 +253,7 @@ def create_app(
         title: Annotated[str, Query(min_length=1, max_length=1024)],
         description: Annotated[str | None, Query(max_length=20_000)] = None,
         due_date: Annotated[date | None, Query()] = None,
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         clean_title = nonblank(title, field_name="title")
 
         async def operation() -> dict[str, Any]:
@@ -284,7 +279,7 @@ def create_app(
         request_tag: RequestTag,
         title: Annotated[str | None, Query(min_length=1, max_length=1024)] = None,
         due_date: Annotated[date | None, Query()] = None,
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         clean_title = nonblank(title, field_name="title") if title is not None else None
         if clean_title is None and due_date is None:
             raise ApiProblem(
@@ -314,7 +309,7 @@ def create_app(
     @app.get(f"{API_PREFIX}/tasks/{{task_id}}/complete", dependencies=ApiDependencies)
     async def complete_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         async def operation() -> dict[str, Any]:
             await services.vikunja.task_in_project(task_id)
             task = await services.vikunja.update_task(task_id, {"done": True})
@@ -331,7 +326,7 @@ def create_app(
     @app.get(f"{API_PREFIX}/tasks/{{task_id}}/reopen", dependencies=ApiDependencies)
     async def reopen_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         async def operation() -> dict[str, Any]:
             await services.vikunja.task_in_project(task_id)
             task = await services.vikunja.update_task(task_id, {"done": False})
@@ -348,7 +343,7 @@ def create_app(
     @app.get(f"{API_PREFIX}/tasks/{{task_id}}/delete", dependencies=ApiDependencies)
     async def delete_task(
         services: ServicesDep, task_id: TaskId, request_tag: RequestTag
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         async def operation() -> dict[str, Any]:
             task = await services.vikunja.task_in_project(task_id)
             await services.vikunja.delete_task(task_id)
@@ -368,7 +363,7 @@ def create_app(
         task_id: TaskId,
         request_tag: RequestTag,
         text: Annotated[str, Query(min_length=1, max_length=20_000)],
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         clean_text = nonblank(text, field_name="text")
 
         async def operation() -> dict[str, Any]:
@@ -391,7 +386,7 @@ def create_app(
         task_id: TaskId,
         request_tag: RequestTag,
         label: Annotated[str, Query(min_length=1, max_length=250)],
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         clean_label = nonblank(label, field_name="label")
 
         async def operation() -> dict[str, Any]:
@@ -414,7 +409,7 @@ def create_app(
         task_id: TaskId,
         request_tag: RequestTag,
         label: Annotated[str, Query(min_length=1, max_length=250)],
-    ) -> JSONResponse:
+    ) -> HTMLResponse:
         clean_label = nonblank(label, field_name="label")
 
         async def operation() -> dict[str, Any]:
@@ -432,9 +427,12 @@ def create_app(
         )
 
     @app.get(f"{API_PREFIX}/tasks/{{task_id}}", dependencies=ApiDependencies)
-    async def get_task(services: ServicesDep, task_id: TaskId) -> JSONResponse:
+    async def get_task(services: ServicesDep, task_id: TaskId) -> HTMLResponse:
         task = await services.vikunja.task_in_project(task_id)
-        return json_response({"ok": True, "action": "task_retrieved", "task": task_view(task)})
+        return result_response(
+            status_code=status.HTTP_200_OK,
+            body={"ok": True, "action": "task_retrieved", "task": task_view(task)},
+        )
 
     return app
 

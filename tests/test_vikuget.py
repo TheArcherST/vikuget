@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import httpx
@@ -25,6 +26,17 @@ def api_headers() -> dict[str, str]:
 
 def api_path(path: str, token: str = "a" * 32, request_tag: str = "read:1") -> str:
     return f"/v1/{token}/{request_tag}{path}"
+
+
+def result_payload(response: httpx.Response) -> dict[str, object]:
+    assert response.headers["content-type"].startswith("text/html")
+    _, opening_tag, remainder = response.text.partition(
+        '<script id="vikuget-result" type="application/json">'
+    )
+    assert opening_tag
+    encoded_json, closing_tag, _ = remainder.partition("</script>")
+    assert closing_tag
+    return json.loads(encoded_json)
 
 
 def test_create_is_replayed_without_second_vikunja_call(tmp_path) -> None:
@@ -59,7 +71,7 @@ def test_create_is_replayed_without_second_vikunja_call(tmp_path) -> None:
         )
 
     assert first.status_code == 200
-    assert first.json() == {
+    assert result_payload(first) == {
         "ok": True,
         "action": "task_created",
         "task": {
@@ -71,7 +83,7 @@ def test_create_is_replayed_without_second_vikunja_call(tmp_path) -> None:
             "labels": [],
         },
     }
-    assert second.json() == first.json()
+    assert result_payload(second) == result_payload(first)
     assert second.headers["idempotent-replay"] == "true"
     assert second.headers["cache-control"] == "no-store, no-cache, max-age=0, private"
     assert len(calls) == 1
@@ -92,7 +104,10 @@ def test_task_outside_configured_project_is_hidden_and_not_modified(tmp_path) ->
         )
 
     assert response.status_code == 404
-    assert response.json()["error"]["code"] == "task_not_found"
+    assert result_payload(response)["error"] == {
+        "code": "task_not_found",
+        "message": "Task not found.",
+    }
     assert [call.method for call in calls] == ["GET"]
 
 
@@ -121,7 +136,12 @@ def test_list_and_search_use_only_the_configured_project_view(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["pagination"] == {"page": 2, "per_page": 20, "count": 1, "total": 1}
+    assert result_payload(response)["pagination"] == {
+        "page": 2,
+        "per_page": 20,
+        "count": 1,
+        "total": 1,
+    }
     assert len(calls) == 2
 
 
@@ -137,7 +157,13 @@ def test_http_query_tokens_and_invalid_path_tokens_are_rejected(tmp_path) -> Non
         invalid_path_token = client.get(api_path("/tasks", "b" * 32), headers=api_headers())
 
     assert insecure.status_code == 400
-    assert insecure.json()["error"]["code"] == "https_required"
+    assert result_payload(insecure)["error"] == {
+        "code": "https_required",
+        "message": "HTTPS is required.",
+    }
     assert query_token.status_code == 400
-    assert query_token.json()["error"]["code"] == "query_token_forbidden"
+    assert result_payload(query_token)["error"] == {
+        "code": "query_token_forbidden",
+        "message": "ACCESS_TOKEN belongs only in the URL path.",
+    }
     assert invalid_path_token.status_code == 401
