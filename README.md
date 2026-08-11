@@ -14,12 +14,12 @@
 ```env
 VIKUNJA_TOKEN=...       # отдельный API token Vikunja
 VIKUNJA_PROJECT_ID=123  # единственный разрешённый проект
-ACCESS_TOKEN=...        # openssl rand -hex 32
+ALLOWED_IPS=203.0.113.25,198.51.100.0/24
 ```
 
-`ACCESS_TOKEN` должен состоять из URL-safe символов (`A-Z`, `a-z`, `0-9`, `_`, `-`) и быть не
-короче 32 символов, поскольку он является одним сегментом URL. `VIKUNJA_PROJECT_VIEW_ID`
-обычно не нужен: шлюз сам выберет List view проекта.
+`ALLOWED_IPS` — либо ровно `*`, чтобы разрешить доступ отовсюду, либо непустой список IP-адресов
+и CIDR через запятую. Например: `203.0.113.25,198.51.100.0/24,2001:db8:1234::/48`.
+`VIKUNJA_PROJECT_VIEW_ID` обычно не нужен: шлюз сам выберет List view проекта.
 
 Для token Vikunja создай отдельного пользователя с доступом только к этому проекту и выдай ему
 минимально нужные права на задачи и метки.
@@ -32,33 +32,48 @@ docker compose ps
 SQLite находится в `./vikuget-data/` в корне репозитория. Его нужно резервировать вместе с
 `db/`, `files/` и `letsencrypt/`.
 
-## Авторизация и кэширование
+## Доступ по IP, журналирование и кэширование
 
 Рабочий URL всегда начинается так:
 
 ```text
-https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/<REQUEST_TAG>/...
+https://vikuget.mymaterials.ru/v1/<REQUEST_TAG>/...
 ```
 
-Это сознательно path-token, чтобы подойти инструментам, умеющим делать только обычные GET.
-У Traefik access-log отключён конкретно для роутера vikuget, а access-log Uvicorn выключен:
-секрет не должен попадать в журналы. Не вставляй этот URL в публичные страницы, логи или историю
-команд, которую могут читать другие.
+Доступ определяется `ALLOWED_IPS`, а не URL-token. Контейнер vikuget находится в отдельной
+внутренней Docker-сети, доступной только Traefik; Traefik добавляет адрес подключившегося клиента
+в `X-Forwarded-For`. Шлюз берёт правый адрес из этого заголовка, сверяет его с allowlist и пишет
+в лог каждое завершённое внешнее обращение — без URL и query-параметров:
+
+```text
+vikuget response client_ip=203.0.113.25 method=GET status=200
+```
+
+Смотреть журнал можно так:
+
+```bash
+docker compose logs -f vikuget
+```
+
+Traefik access-log для этого роутера остаётся выключенным. Эта конфигурация рассчитана на прямое
+подключение клиента к Traefik. Если перед сервером есть другой прокси или CDN, сначала настрой
+доверенную цепочку forwarded-заголовков у обоих компонентов; не включай
+`forwardedHeaders.insecure` в production.
 
 `REQUEST_TAG` обязателен в любом запросе. Это произвольная непустая строка до 1024 символов,
-например `1723363200:17`; после URL-кодирования она идёт сразу после token и отличает одну
+например `1723363200:17`; после URL-кодирования она идёт сразу после `/v1/` и отличает одну
 пользовательскую интенцию от другой даже при неконтролируемом промежуточном кэшировании.
 
 Ответы содержат `Cache-Control: no-store, no-cache, max-age=0, private`, `Pragma: no-cache` и
 `Expires: 0`. Для изменяющих операций повтор с тем же tag и теми же параметрами вернёт сохранённый
 ответ без повторного вызова Vikunja (`Idempotent-Replay: true`). С тем же tag и другими параметрами
-будет `409`. Если исход операции нельзя безопасно установить, повтор также вернёт `409`, а не
-создаст дубликат.
+вернётся ошибочная HTML-страница с кодом `request_tag_reused`. Если исход операции нельзя
+безопасно установить, повтор вернёт `request_in_progress`, а не создаст дубликат.
 
 ## API
 
 Во всех путях ниже `BASE` —
-`https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/<REQUEST_TAG>`. Все методы — только `GET`;
+`https://vikuget.mymaterials.ru/v1/<REQUEST_TAG>`. Все методы — только `GET`;
 даты указываются как `YYYY-MM-DD`.
 
 | Действие | URL и параметры |
@@ -76,21 +91,37 @@ https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/<REQUEST_TAG>/...
 Например:
 
 ```bash
-curl --get 'https://vikuget.mymaterials.ru/v1/<ACCESS_TOKEN>/1723363200:17/tasks/create' \
+curl --get 'https://vikuget.mymaterials.ru/v1/1723363200:17/tasks/create' \
   --data-urlencode 'title=Купить SSD' \
   --data-urlencode 'due_date=2026-08-14'
 ```
 
-Каждый ответ — минимальный HTML без стилей и визуального интерфейса. JSON лежит текстом в
-единственном элементе `script#vikuget-result` с `type="application/json"`:
+Каждый ответ — простая HTML-страница без CSS и JavaScript. На ней обычными заголовками, списками
+и списками определений показаны результат действия, поля задачи, комментарий, метки и навигация.
+Например, после создания задачи ответ выглядит так:
 
 ```html
-<!doctype html><html><head><meta charset="utf-8"></head><body><script id="vikuget-result" type="application/json">{"ok":true,"action":"task_created","task":{"id":42,"title":"Купить SSD","description":"","done":false,"due_date":"2026-08-14","labels":[]}}</script></body></html>
+<!doctype html>
+<html lang="ru">
+  <head><meta charset="utf-8"><title>Задача создана</title></head>
+  <body><main>
+    <h1>Задача создана</h1>
+    <section><h2>Задача</h2>
+      <dl>
+        <dt>ID</dt><dd>42</dd>
+        <dt>Название</dt><dd>Купить SSD</dd>
+        <dt>Описание</dt><dd>—</dd>
+        <dt>Выполнена</dt><dd>Нет</dd>
+        <dt>Срок</dt><dd>2026-08-14</dd>
+      </dl>
+      <h3>Метки</h3><p>Нет</p>
+    </section>
+  </main></body>
+</html>
 ```
 
-Из HTML JSON извлекается напрямую: `JSON.parse(document.querySelector("#vikuget-result").textContent)`.
-HTTP-статус всегда `200`; ошибки используют ту же структуру и отличаются полем `ok: false` и
-значением `error.code`.
+Страница ошибки содержит заголовок, понятное сообщение и машинный код ошибки. HTTP-статус всегда
+`200`.
 
 Перед действием с `task_id` шлюз читает задачу и проверяет её `project_id`; задача из другого
 проекта выглядит как несуществующая. Метка добавляется по имени: существующая переиспользуется,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -15,15 +14,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .access import client_ip_from_x_forwarded_for
 from .client import VikunjaClient
 from .config import Settings
 from .errors import ApiProblem, error_body, error_response, result_response
 from .replays import CachedResponse, RequestReplayStore
 from .views import comment_view, fingerprint, nonblank, task_view
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
-API_PREFIX = "/v1/{access_token}/{request_tag}"
+API_PREFIX = "/v1/{request_tag}"
 
 
 @dataclass
@@ -42,23 +42,6 @@ RequestTag = Annotated[str, Path(min_length=1, max_length=1024)]
 TaskId = Annotated[int, Path(ge=1)]
 
 
-async def require_access_token(
-    request: Request,
-    access_token: Annotated[str, Path(min_length=32, max_length=512)],
-) -> None:
-    if "access_token" in request.query_params:
-        raise ApiProblem(
-            status.HTTP_400_BAD_REQUEST,
-            "query_token_forbidden",
-            "ACCESS_TOKEN belongs only in the URL path.",
-        )
-    expected = request.app.state.services.settings.access_token.get_secret_value()
-    if not hmac.compare_digest(access_token, expected):
-        raise ApiProblem(
-            status.HTTP_401_UNAUTHORIZED, "authentication_failed", "Authentication failed."
-        )
-
-
 async def require_request_tag(request_tag: RequestTag) -> None:
     if not request_tag.strip():
         raise ApiProblem(
@@ -68,7 +51,7 @@ async def require_request_tag(request_tag: RequestTag) -> None:
         )
 
 
-ApiDependencies = [Depends(require_access_token), Depends(require_request_tag)]
+ApiDependencies = [Depends(require_request_tag)]
 
 
 async def run_mutation(
@@ -145,23 +128,50 @@ def create_app(
     )
 
     @app.middleware("http")
-    async def allow_only_https_get(
+    async def authorize_and_log_request(
         request: Request, call_next: Callable[..., Awaitable[Any]]
     ) -> Any:
-        if request.method != "GET":
-            return error_response(
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        client_ip = "unknown"
+        try:
+            client_address = client_ip_from_x_forwarded_for(request.headers.get("x-forwarded-for"))
+            client_ip = str(client_address)
+        except ValueError:
+            response = error_response(
                 action="request_rejected",
-                code="method_not_allowed",
-                message="Only GET requests are accepted.",
+                code="client_ip_unavailable",
+                message="The client IP address is unavailable.",
             )
-        # Docker calls /health directly; all other requests must come from Traefik.
-        if request.url.path != "/health" and request.headers.get("x-forwarded-proto") != "https":
-            return error_response(
-                action="request_rejected",
-                code="https_required",
-                message="HTTPS is required.",
-            )
-        return await call_next(request)
+        else:
+            if request.method != "GET":
+                response = error_response(
+                    action="request_rejected",
+                    code="method_not_allowed",
+                    message="Only GET requests are accepted.",
+                )
+            elif request.headers.get("x-forwarded-proto") != "https":
+                response = error_response(
+                    action="request_rejected",
+                    code="https_required",
+                    message="HTTPS is required.",
+                )
+            elif not services.settings.allowed_ips.allows(client_address):
+                response = error_response(
+                    action="request_rejected",
+                    code="ip_not_allowed",
+                    message="This IP address is not allowed.",
+                )
+            else:
+                response = await call_next(request)
+        logger.info(
+            "vikuget response client_ip=%s method=%s status=%s",
+            client_ip,
+            request.method,
+            response.status_code,
+        )
+        return response
 
     @app.exception_handler(ApiProblem)
     async def handle_api_problem(_: Request, problem: ApiProblem) -> HTMLResponse:

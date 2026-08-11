@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .access import AccessPolicy
 
 
 class Settings(BaseSettings):
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
     vikunja_token: SecretStr
     vikunja_project_id: int = Field(gt=0)
     vikunja_project_view_id: int | None = Field(default=None, gt=0)
-    access_token: SecretStr
+    allowed_ips: AccessPolicy
     request_store_path: Path = Path("/data/idempotency.sqlite3")
     request_retention_days: int = Field(default=30, ge=1, le=365)
     vikunja_timeout_seconds: float = Field(default=15, gt=0, le=120)
@@ -33,13 +34,10 @@ class Settings(BaseSettings):
             raise ValueError("VIKUNJA_URL must not contain a path, query, or fragment")
         return value.rstrip("/")
 
-    @field_validator("access_token")
+    @field_validator("allowed_ips", mode="before")
     @classmethod
-    def validate_access_token(cls, value: SecretStr) -> SecretStr:
-        token = value.get_secret_value()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{32,}", token):
-            raise ValueError("ACCESS_TOKEN must be at least 32 URL-safe characters")
-        return value
+    def parse_allowed_ips(cls, value: AccessPolicy | str) -> AccessPolicy:
+        return value if isinstance(value, AccessPolicy) else AccessPolicy.parse(value)
 
     @field_validator("vikunja_project_view_id", mode="before")
     @classmethod
