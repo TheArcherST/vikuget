@@ -23,7 +23,8 @@ from .views import comment_view, fingerprint, nonblank, task_view
 
 logger = logging.getLogger("uvicorn.error")
 
-API_PREFIX = "/v1/{request_tag}"
+API_PREFIX = "/{request_tag}"
+LEGACY_API_PREFIX = "/v1"
 
 
 @dataclass
@@ -131,7 +132,12 @@ def create_app(
     async def authorize_and_log_request(
         request: Request, call_next: Callable[..., Awaitable[Any]]
     ) -> Any:
-        if request.url.path == "/health":
+        original_path = request.scope["path"]
+        is_healthcheck = original_path == "/health"
+        if original_path.startswith(f"{LEGACY_API_PREFIX}/"):
+            request.scope["path"] = original_path.removeprefix(LEGACY_API_PREFIX)
+
+        if is_healthcheck:
             return await call_next(request)
 
         client_ip = "unknown"

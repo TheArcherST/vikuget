@@ -31,7 +31,7 @@ def api_headers(client_ip: str = "198.51.100.23") -> dict[str, str]:
 
 
 def api_path(path: str, request_tag: str = "read:1") -> str:
-    return f"/v1/{request_tag}{path}"
+    return f"/{request_tag}{path}"
 
 
 class HtmlTextExtractor(HTMLParser):
@@ -148,6 +148,26 @@ def test_list_and_search_use_only_the_configured_project_view(tmp_path) -> None:
     assert "Название Buy SSD" in text
     assert "Навигация Страница 2 На странице 20 Показано 1 Всего 1" in text
     assert len(calls) == 2
+
+
+def test_legacy_v1_prefix_is_handled_without_redirect(tmp_path) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path == "/api/v1/projects/17/views":
+            return httpx.Response(200, json=[{"id": 7, "view_kind": "list"}])
+        return httpx.Response(200, json=[])
+
+    with make_client(tmp_path, handler) as client:
+        response = client.get("/v1/legacy:1/tasks", headers=api_headers())
+
+    assert response.status_code == 200
+    assert "Список задач" in page_text(response)
+    assert [request.url.path for request in calls] == [
+        "/api/v1/projects/17/views",
+        "/api/v1/projects/17/views/7/tasks",
+    ]
 
 
 def test_ip_access_and_rejected_requests_are_reported(tmp_path, caplog) -> None:

@@ -37,8 +37,12 @@ SQLite находится в `./vikuget-data/` в корне репозитор�
 Рабочий URL всегда начинается так:
 
 ```text
-https://vikuget.mymaterials.ru/v1/<REQUEST_TAG>/...
+https://vikuget.mymaterials.ru/<REQUEST_TAG>/...
 ```
+
+Для совместимости также принимается старый версионный префикс
+`https://vikuget.mymaterials.ru/v1/<REQUEST_TAG>/...`: он обрабатывается внутри шлюза без
+redirect и возвращает тот же HTTP `200`. Token в этом fallback не используется.
 
 Доступ определяется `ALLOWED_IPS`, а не URL-token. Контейнер vikuget находится в отдельной
 внутренней Docker-сети, доступной только Traefik; Traefik добавляет адрес подключившегося клиента
@@ -61,7 +65,7 @@ Traefik access-log для этого роутера остаётся выклю�
 `forwardedHeaders.insecure` в production.
 
 `REQUEST_TAG` обязателен в любом запросе. Это произвольная непустая строка до 1024 символов,
-например `1723363200:17`; после URL-кодирования она идёт сразу после `/v1/` и отличает одну
+например `1723363200:17`; после URL-кодирования она идёт сразу после домена и отличает одну
 пользовательскую интенцию от другой даже при неконтролируемом промежуточном кэшировании.
 
 Ответы содержат `Cache-Control: no-store, no-cache, max-age=0, private`, `Pragma: no-cache` и
@@ -73,7 +77,7 @@ Traefik access-log для этого роутера остаётся выклю�
 ## API
 
 Во всех путях ниже `BASE` —
-`https://vikuget.mymaterials.ru/v1/<REQUEST_TAG>`. Все методы — только `GET`;
+`https://vikuget.mymaterials.ru/<REQUEST_TAG>`. Все методы — только `GET`;
 даты указываются как `YYYY-MM-DD`.
 
 | Действие | URL и параметры |
@@ -91,7 +95,7 @@ Traefik access-log для этого роутера остаётся выклю�
 Например:
 
 ```bash
-curl --get 'https://vikuget.mymaterials.ru/v1/1723363200:17/tasks/create' \
+curl --get 'https://vikuget.mymaterials.ru/1723363200:17/tasks/create' \
   --data-urlencode 'title=Купить SSD' \
   --data-urlencode 'due_date=2026-08-14'
 ```
