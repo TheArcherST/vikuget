@@ -85,26 +85,22 @@ async def run_mutation(
     )
     if cached is not None:
         return result_response(
-            status_code=cached.status_code,
             body=cached.body,
             extra_headers={"Idempotent-Replay": "true"},
         )
 
     try:
         response = CachedResponse(
-            status.HTTP_200_OK,
-            {"ok": True, "action": action, **await operation()},
+            body={"ok": True, "action": action, **await operation()},
         )
     except ApiProblem as problem:
         response = CachedResponse(
-            problem.status_code,
-            error_body(action=action, code=problem.code, message=problem.message),
+            body=error_body(action=action, code=problem.code, message=problem.message),
         )
     except Exception:
         logger.exception("Unhandled mutation failure for action %s", action)
         response = CachedResponse(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_body(
+            body=error_body(
                 action=action,
                 code="internal_error",
                 message="The action could not be completed safely.",
@@ -112,10 +108,7 @@ async def run_mutation(
         )
 
     services.replays.complete(request_tag=request_tag, response=response)
-    return result_response(
-        status_code=response.status_code,
-        body=response.body,
-    )
+    return result_response(body=response.body)
 
 
 def create_app(
@@ -157,7 +150,6 @@ def create_app(
     ) -> Any:
         if request.method != "GET":
             return error_response(
-                status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
                 action="request_rejected",
                 code="method_not_allowed",
                 message="Only GET requests are accepted.",
@@ -165,7 +157,6 @@ def create_app(
         # Docker calls /health directly; all other requests must come from Traefik.
         if request.url.path != "/health" and request.headers.get("x-forwarded-proto") != "https":
             return error_response(
-                status_code=status.HTTP_400_BAD_REQUEST,
                 action="request_rejected",
                 code="https_required",
                 message="HTTPS is required.",
@@ -175,7 +166,6 @@ def create_app(
     @app.exception_handler(ApiProblem)
     async def handle_api_problem(_: Request, problem: ApiProblem) -> HTMLResponse:
         return error_response(
-            status_code=problem.status_code,
             action="request_rejected",
             code=problem.code,
             message=problem.message,
@@ -184,7 +174,6 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(_: Request, __: RequestValidationError) -> HTMLResponse:
         return error_response(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             action="request_rejected",
             code="invalid_request",
             message="Request parameters are invalid.",
@@ -197,16 +186,23 @@ def create_app(
         )
         message = "Endpoint not found." if code == "not_found" else "Request rejected."
         return error_response(
-            status_code=problem.status_code,
             action="request_rejected",
             code=code,
             message=message,
         )
 
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(_: Request, problem: Exception) -> HTMLResponse:
+        logger.exception("Unhandled request failure", exc_info=problem)
+        return error_response(
+            action="request_rejected",
+            code="internal_error",
+            message="The request could not be completed safely.",
+        )
+
     @app.get("/health", include_in_schema=False)
     async def health() -> HTMLResponse:
         return result_response(
-            status_code=status.HTTP_200_OK,
             body={"ok": True, "action": "health_checked", "status": "ok"},
         )
 
@@ -225,7 +221,7 @@ def create_app(
         }
         if total is not None:
             result["pagination"]["total"] = total
-        return result_response(status_code=status.HTTP_200_OK, body=result)
+        return result_response(body=result)
 
     @app.get(f"{API_PREFIX}/tasks/search", dependencies=ApiDependencies)
     async def search_tasks(
@@ -244,7 +240,7 @@ def create_app(
         }
         if total is not None:
             result["pagination"]["total"] = total
-        return result_response(status_code=status.HTTP_200_OK, body=result)
+        return result_response(body=result)
 
     @app.get(f"{API_PREFIX}/tasks/create", dependencies=ApiDependencies)
     async def create_task(
@@ -430,7 +426,6 @@ def create_app(
     async def get_task(services: ServicesDep, task_id: TaskId) -> HTMLResponse:
         task = await services.vikunja.task_in_project(task_id)
         return result_response(
-            status_code=status.HTTP_200_OK,
             body={"ok": True, "action": "task_retrieved", "task": task_view(task)},
         )
 

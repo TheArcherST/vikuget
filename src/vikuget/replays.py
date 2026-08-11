@@ -15,7 +15,6 @@ from .errors import ApiProblem
 
 @dataclass(frozen=True)
 class CachedResponse:
-    status_code: int
     body: dict[str, Any]
 
 
@@ -99,7 +98,7 @@ class RequestReplayStore:
                 "request_in_progress",
                 "The original request has an unknown outcome and will not be repeated.",
             )
-        return CachedResponse(status_code=response_status, body=json.loads(response_json))
+        return CachedResponse(body=json.loads(response_json))
 
     def complete(self, *, request_tag: str, response: CachedResponse) -> None:
         connection = self._connection()
@@ -110,7 +109,7 @@ class RequestReplayStore:
             WHERE request_tag = ?
             """,
             (
-                response.status_code,
+                status.HTTP_200_OK,
                 json.dumps(response.body, ensure_ascii=False, separators=(",", ":")),
                 request_tag,
             ),

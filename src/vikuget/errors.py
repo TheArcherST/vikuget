@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from fastapi import status
 from fastapi.responses import HTMLResponse
 
 NO_STORE_HEADERS = {
@@ -31,20 +32,18 @@ def error_body(*, action: str, code: str, message: str) -> dict[str, Any]:
 def result_response(
     *,
     body: dict[str, Any],
-    status_code: int,
     extra_headers: dict[str, str] | None = None,
 ) -> HTMLResponse:
     headers = {**NO_STORE_HEADERS, **(extra_headers or {})}
     return HTMLResponse(
-        status_code=status_code,
+        status_code=status.HTTP_200_OK,
         content=html_document(body),
         headers=headers,
     )
 
 
-def error_response(*, status_code: int, action: str, code: str, message: str) -> HTMLResponse:
+def error_response(*, action: str, code: str, message: str) -> HTMLResponse:
     return result_response(
-        status_code=status_code,
         body=error_body(action=action, code=code, message=message),
     )
 

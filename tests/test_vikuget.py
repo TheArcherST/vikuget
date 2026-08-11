@@ -103,7 +103,7 @@ def test_task_outside_configured_project_is_hidden_and_not_modified(tmp_path) ->
             headers=api_headers(),
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
     assert result_payload(response)["error"] == {
         "code": "task_not_found",
         "message": "Task not found.",
@@ -155,15 +155,27 @@ def test_http_query_tokens_and_invalid_path_tokens_are_rejected(tmp_path) -> Non
             api_path("/tasks"), params={"access_token": "a" * 32}, headers=api_headers()
         )
         invalid_path_token = client.get(api_path("/tasks", "b" * 32), headers=api_headers())
+        missing_endpoint = client.get(api_path("/missing"), headers=api_headers())
+        wrong_method = client.post(api_path("/tasks"), headers=api_headers())
 
-    assert insecure.status_code == 400
+    assert insecure.status_code == 200
     assert result_payload(insecure)["error"] == {
         "code": "https_required",
         "message": "HTTPS is required.",
     }
-    assert query_token.status_code == 400
+    assert query_token.status_code == 200
     assert result_payload(query_token)["error"] == {
         "code": "query_token_forbidden",
         "message": "ACCESS_TOKEN belongs only in the URL path.",
     }
-    assert invalid_path_token.status_code == 401
+    assert invalid_path_token.status_code == 200
+    assert missing_endpoint.status_code == 200
+    assert result_payload(missing_endpoint)["error"] == {
+        "code": "not_found",
+        "message": "Endpoint not found.",
+    }
+    assert wrong_method.status_code == 200
+    assert result_payload(wrong_method)["error"] == {
+        "code": "method_not_allowed",
+        "message": "Only GET requests are accepted.",
+    }
